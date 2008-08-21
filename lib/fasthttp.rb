@@ -5,20 +5,123 @@
 # See file LICENSE for details
 #++
 
-require File.dirname(__FILE__) + '/../http11_client'
+require File.dirname(__FILE__) + '/http11_client'
 
 # A Fast HTTP client, with a Ragel-powered HTTP parser and support for evented
 # frameworks like Rev
 class FastHTTP
+   # A simple hash is returned for each request made by HttpClient with
+   # the headers that were given by the server for that request.
+   class ResponseHeader < Hash
+     # The reason returned in the http response ("OK","File not found",etc.)
+     attr_accessor :http_reason
+
+     # The HTTP version returned.
+     attr_accessor :http_version
+
+     # The status code (as a string!)
+     attr_accessor :http_status
+
+     # HTTP response status as an integer
+     def status
+       Integer(http_status) rescue nil
+     end
+
+     # Length of content as an integer, or nil if chunked/unspecified
+     def content_length
+       Integer(self[HttpClient::CONTENT_LENGTH]) rescue nil
+     end
+
+     # Is the transfer encoding chunked?
+     def chunked_encoding?
+       /chunked/i === self[HttpClient::TRANSFER_ENCODING]
+     end
+  end
+  
+  # Chunked encoding headers
+  class ChunkHeader < Hash
+    # When parsing chunked encodings this is set
+    attr_accessor :http_chunk_size
+
+    # Size of the chunk as an integer
+    def chunk_size
+      return @chunk_size unless @chunk_size.nil?
+      @chunk_size = @http_chunk_size ? @http_chunk_size.to_i(base=16) : 0
+    end
+  end
+  
+  # Methods for building HTTP requests
+  module RequestBuilder
+    HTTP_REQUEST_HEADER="%s %s HTTP/1.1\r\n"
+    FIELD_ENCODING = "%s: %s\r\n"
+
+    # Escapes a URI.
+    def escape(s)
+      s.to_s.gsub(/([^ a-zA-Z0-9_.-]+)/n) {
+        '%'+$1.unpack('H2'*$1.size).join('%').upcase
+      }.tr(' ', '+') 
+    end
+
+    # Unescapes a URI escaped string.
+    def unescape(s)
+      s.tr('+', ' ').gsub(/((?:%[0-9a-fA-F]{2})+)/n){
+        [$1.delete('%')].pack('H*')
+      } 
+    end
+
+    # Map all header keys to a downcased string version
+    def munge_header_keys(head)
+      head.inject({}) { |h, (k, v)| h[k.to_s.downcase] = v; h }
+    end
+
+    # HTTP is kind of retarded that you have to specify
+    # a Host header, but if you include port 80 then further
+    # redirects will tack on the :80 which is annoying.
+    def encode_host
+      remote_host + (remote_port.to_i != 80 ? ":#{remote_port}" : "")
+    end
+
+    def encode_request(method, path, query)
+      HTTP_REQUEST_HEADER % [method.to_s.upcase, encode_query(path, query)]
+    end
+
+    def encode_query(path, query)
+      return path unless query
+      path + "?" + query.map { |k, v| encode_param(k, v) }.join('&')
+    end
+
+    # URL encodes a single k=v parameter.
+    def encode_param(k, v)
+      escape(k) + "=" + escape(v)
+    end
+
+    # Encode a field in an HTTP header
+    def encode_field(k, v)
+      FIELD_ENCODING % [k, v]
+    end
+
+    def encode_headers(head)
+      head.inject('') do |result, (key, value)|
+        # Munge keys from foo-bar-baz to Foo-Bar-Baz
+        key = key.split('-').map { |k| k.capitalize }.join('-')
+      result << encode_field(key, value)
+      end
+    end
+
+    def encode_cookies(cookies)
+      cookies.inject('') { |result, (k, v)| result << encode_field('Cookie', encode_param(k, v)) }
+    end
+  end
+  
   include RequestBuilder
 
-  ALLOWED_METHODS=[:put, :get, :post, :delete, :head]
-  TRANSFER_ENCODING="TRANSFER_ENCODING"
-  CONTENT_LENGTH="CONTENT_LENGTH"
-  SET_COOKIE="SET_COOKIE"
-  LOCATION="LOCATION"
-  HOST="HOST"
-  CRLF="\r\n"
+  ALLOWED_METHODS = [:put, :get, :post, :delete, :head]
+  TRANSFER_ENCODING = "TRANSFER_ENCODING"
+  CONTENT_LENGTH = "CONTENT_LENGTH"
+  SET_COOKIE = "SET_COOKIE"
+  LOCATION = "LOCATION"
+  HOST = "HOST"
+  CRLF = "\r\n"
 
   # Connect to the given server, with port 80 as the default
   def self.connect(addr, port = 80, *args)
@@ -301,108 +404,5 @@ class FastHTTP
     end
 
     false
-  end
-  
-   # A simple hash is returned for each request made by HttpClient with
-   # the headers that were given by the server for that request.
-   class ResponseHeader < Hash
-     # The reason returned in the http response ("OK","File not found",etc.)
-     attr_accessor :http_reason
-
-     # The HTTP version returned.
-     attr_accessor :http_version
-
-     # The status code (as a string!)
-     attr_accessor :http_status
-
-     # HTTP response status as an integer
-     def status
-       Integer(http_status) rescue nil
-     end
-
-     # Length of content as an integer, or nil if chunked/unspecified
-     def content_length
-       Integer(self[HttpClient::CONTENT_LENGTH]) rescue nil
-     end
-
-     # Is the transfer encoding chunked?
-     def chunked_encoding?
-       /chunked/i === self[HttpClient::TRANSFER_ENCODING]
-     end
-  end
-  
-  # Chunked encoding headers
-  class ChunkHeader < Hash
-    # When parsing chunked encodings this is set
-    attr_accessor :http_chunk_size
-
-    # Size of the chunk as an integer
-    def chunk_size
-      return @chunk_size unless @chunk_size.nil?
-      @chunk_size = @http_chunk_size ? @http_chunk_size.to_i(base=16) : 0
-    end
-  end
-  
-  # Methods for building HTTP requests
-  module RequestBuilder
-    HTTP_REQUEST_HEADER="%s %s HTTP/1.1\r\n"
-    FIELD_ENCODING = "%s: %s\r\n"
-
-    # Escapes a URI.
-    def escape(s)
-      s.to_s.gsub(/([^ a-zA-Z0-9_.-]+)/n) {
-        '%'+$1.unpack('H2'*$1.size).join('%').upcase
-      }.tr(' ', '+') 
-    end
-
-    # Unescapes a URI escaped string.
-    def unescape(s)
-      s.tr('+', ' ').gsub(/((?:%[0-9a-fA-F]{2})+)/n){
-        [$1.delete('%')].pack('H*')
-      } 
-    end
-
-    # Map all header keys to a downcased string version
-    def munge_header_keys(head)
-      head.inject({}) { |h, (k, v)| h[k.to_s.downcase] = v; h }
-    end
-
-    # HTTP is kind of retarded that you have to specify
-    # a Host header, but if you include port 80 then further
-    # redirects will tack on the :80 which is annoying.
-    def encode_host
-      remote_host + (remote_port.to_i != 80 ? ":#{remote_port}" : "")
-    end
-
-    def encode_request(method, path, query)
-      HTTP_REQUEST_HEADER % [method.to_s.upcase, encode_query(path, query)]
-    end
-
-    def encode_query(path, query)
-      return path unless query
-      path + "?" + query.map { |k, v| encode_param(k, v) }.join('&')
-    end
-
-    # URL encodes a single k=v parameter.
-    def encode_param(k, v)
-      escape(k) + "=" + escape(v)
-    end
-
-    # Encode a field in an HTTP header
-    def encode_field(k, v)
-      FIELD_ENCODING % [k, v]
-    end
-
-    def encode_headers(head)
-      head.inject('') do |result, (key, value)|
-        # Munge keys from foo-bar-baz to Foo-Bar-Baz
-        key = key.split('-').map { |k| k.capitalize }.join('-')
-      result << encode_field(key, value)
-      end
-    end
-
-    def encode_cookies(cookies)
-      cookies.inject('') { |result, (k, v)| result << encode_field('Cookie', encode_param(k, v)) }
-    end
   end
 end
