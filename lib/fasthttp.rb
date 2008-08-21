@@ -1,5 +1,5 @@
 #--
-# Copyright (C)2007 Tony Arcieri
+# Copyright (C)2007-08 Tony Arcieri
 # Includes portions originally Copyright (C)2005 Zed Shaw
 # You can redistribute this under the terms of the Ruby license
 # See file LICENSE for details
