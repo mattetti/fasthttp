@@ -10,6 +10,14 @@ require File.dirname(__FILE__) + '/http11_client'
 # A Fast HTTP client, with a Ragel-powered HTTP parser and support for evented
 # frameworks like Rev
 class FastHTTP
+  ALLOWED_METHODS = [:put, :get, :post, :delete, :head]
+  TRANSFER_ENCODING = "TRANSFER_ENCODING"
+  CONTENT_LENGTH = "CONTENT_LENGTH"
+  SET_COOKIE = "SET_COOKIE"
+  LOCATION = "LOCATION"
+  HOST = "HOST"
+  CRLF = "\r\n"
+  
    # A simple hash is returned for each request made by HttpClient with
    # the headers that were given by the server for that request.
    class ResponseHeader < Hash
@@ -29,12 +37,12 @@ class FastHTTP
 
      # Length of content as an integer, or nil if chunked/unspecified
      def content_length
-       Integer(self[HttpClient::CONTENT_LENGTH]) rescue nil
+       Integer(self[FastHTTP::CONTENT_LENGTH]) rescue nil
      end
 
      # Is the transfer encoding chunked?
      def chunked_encoding?
-       /chunked/i === self[HttpClient::TRANSFER_ENCODING]
+       /chunked/i === self[FastHTTP::TRANSFER_ENCODING]
      end
   end
   
@@ -77,8 +85,8 @@ class FastHTTP
     # HTTP is kind of retarded that you have to specify
     # a Host header, but if you include port 80 then further
     # redirects will tack on the :80 which is annoying.
-    def encode_host
-      remote_host + (remote_port.to_i != 80 ? ":#{remote_port}" : "")
+    def encode_host(socket)
+      socket.remote_host + (socket.remote_port.to_i != 80 ? ":#{remote_port}" : "")
     end
 
     def encode_request(method, path, query)
@@ -113,23 +121,33 @@ class FastHTTP
     end
   end
   
+  class RequestSocket < Rev::TCPSocket
+    attr_accessor :client
+    
+    def on_connect
+      @client.on_connect
+    end
+
+    def on_read(data)
+      @client.on_read data
+    end
+  end
+  
   include RequestBuilder
 
-  ALLOWED_METHODS = [:put, :get, :post, :delete, :head]
-  TRANSFER_ENCODING = "TRANSFER_ENCODING"
-  CONTENT_LENGTH = "CONTENT_LENGTH"
-  SET_COOKIE = "SET_COOKIE"
-  LOCATION = "LOCATION"
-  HOST = "HOST"
-  CRLF = "\r\n"
-
+  # Current version of the library
+  def self.version
+    '0.1.0'
+  end
+  
   # Begin a request to the given server
   def self.start(addr, port = 80)
-    new(Rev::TCPSocket.connect(addr, port))
+    new(RequestSocket.connect(addr, port))
   end
 
   def initialize(socket)
     @socket = socket
+    @socket.client = self
 
     @parser = HttpClientParser.new
     @parser_nbytes = 0
@@ -144,6 +162,20 @@ class FastHTTP
   # Attach the client to the given event loop
   def attach(event_loop)
     @socket.attach(event_loop)
+  end
+  
+  #
+  # Callbacks from RequestSocket
+  #
+  
+  def on_connect
+    @connected = true
+    send_request if @method and @path
+  end
+  
+  def on_read(data)
+    @data << data
+    dispatch
   end
 
   # Send an HTTP request and consume the response.  
@@ -190,7 +222,7 @@ class FastHTTP
 
   # Called when the request has completed
   def on_request_complete
-    close
+    @socket.close
   end
 
   # Called when an error occurs dispatching the request
@@ -202,20 +234,6 @@ class FastHTTP
   #########
   protected
   #########
-
-  #
-  # Rev callbacks
-  #
-      
-  def on_connect
-    @connected = true
-    send_request if @method and @path
-  end
-
-  def on_read(data)
-    @data << data
-    dispatch
-  end
 
   #
   # Request sending
@@ -233,13 +251,13 @@ class FastHTTP
     body    = @options[:body]
 
     # Set the Host header if it hasn't been specified already
-    head['host'] ||= encode_host
+    head['host'] ||= encode_host(@socket)
 
     # Set the Content-Length if it hasn't been specified already and a body was given
     head['content-length'] ||= body ? body.length : 0
 
     # Set the User-Agent if it hasn't been specified
-    head['user-agent'] ||= "Rev #{Rev::VERSION}"
+    head['user-agent'] ||= "FastHTTP #{self.class.version}"
 
     # Default to Connection: close
     head['connection'] ||= 'close'
@@ -250,7 +268,7 @@ class FastHTTP
     request_header << encode_cookies(cookies) if cookies
     request_header << CRLF
 
-    write request_header
+    @socket.write request_header
   end
 
   def send_request_body
@@ -262,7 +280,7 @@ class FastHTTP
   #
 
   def dispatch
-    while enabled? and case @state
+    while @socket.enabled? and case @state
       when :response_header
         parse_response_header
       when :chunk_header
@@ -287,7 +305,7 @@ class FastHTTP
     
     begin
       @parser_nbytes = @parser.execute(header, @data.to_str, @parser_nbytes)
-    rescue Rev::HttpClientParserError
+    rescue HttpClientParserError
       on_error "invalid HTTP format, parsing fails"
       @state = :invalid
     end
