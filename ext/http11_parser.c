@@ -1,7 +1,7 @@
 #line 1 "http11_parser.rl"
 /**
  * Copyright (c) 2005 Zed A. Shaw
- * You can redistribute it and/or modify it under the same terms as Ruby.
+ * You can redistribute it and/or modify it under the MIT license.
  */
 
 #include "http11_parser.h"
