@@ -1,7 +1,7 @@
 #--
 # Copyright (C)2007-08 Tony Arcieri
 # Includes portions originally Copyright (C)2005 Zed Shaw
-# You can redistribute this under the terms of the Ruby license
+# You can redistribute this under the terms of the MIT license
 # See file LICENSE for details
 #++
 
@@ -123,13 +123,13 @@ class FastHTTP
   HOST = "HOST"
   CRLF = "\r\n"
 
-  # Connect to the given server, with port 80 as the default
-  def self.connect(addr, port = 80, *args)
-    super
+  # Begin a request to the given server
+  def self.start(addr, port = 80)
+    new(Rev::TCPSocket.connect(addr, port))
   end
 
   def initialize(socket)
-    super
+    @socket = socket
 
     @parser = HttpClientParser.new
     @parser_nbytes = 0
@@ -139,6 +139,11 @@ class FastHTTP
 
     @response_header = ResponseHeader.new
     @chunk_header = ChunkHeader.new
+  end
+  
+  # Attach the client to the given event loop
+  def attach(event_loop)
+    @socket.attach(event_loop)
   end
 
   # Send an HTTP request and consume the response.  
