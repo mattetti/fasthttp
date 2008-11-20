@@ -2,16 +2,17 @@ require 'rubygems'
 
 GEMSPEC = Gem::Specification.new do |s|
   s.name = "fasthttp"
-  s.version = "0.1.0"
+  s.version = "0.1.1"
   s.authors = ["Tony Arcieri", "Zed Shaw"]
   s.email = "tony@medioh.com"
-  s.date = "2008-8-21"
+  s.date = "2008-11-20"
   s.summary = "FastHTTP is a Ruby library suitable for use as a drop-in Net::HTTP replacement or with event frameworks like EventMachine and Rev"
   s.platform = Gem::Platform::RUBY
   s.required_ruby_version = '>= 1.8.6'
 
   # Gem contents
   s.files = Dir.glob("{lib,ext,spec,tasks}/**/*") + ['Rakefile', 'fasthttp.gemspec']
+  s.add_dependency 'rev', '~> 0.2.2'
 
   # RubyForge info
   s.homepage = "http://fasthttp.rubyforge.org"

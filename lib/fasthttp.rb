@@ -6,6 +6,8 @@
 #++
 
 require File.dirname(__FILE__) + '/http11_client'
+gem 'rev', "~> 0.2.2"
+require 'rev'
 
 # A Fast HTTP client, with a Ragel-powered HTTP parser and support for evented
 # frameworks like Rev
